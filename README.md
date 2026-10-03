@@ -1,14 +1,14 @@
+[Инструкция на русском языке здесь](README.ru.md).
+
 # Telegram Gemini Transcriber
 
-A personal Telegram bot that turns Russian voice messages and audio files into edited text using Gemini. It accepts one configured private chat, handles long transcripts and temporary API failures, and removes temporary audio after processing. No database, user profiles, usage statistics, admin commands or daily quotas.
+A personal Telegram bot that turns Russian voice messages and audio files into edited text using Gemini. It accepts one configured private chat, splits long transcripts, retries temporary failures and removes temporary audio after processing. There is no database, user profile system, usage statistics, admin commands or daily quota.
 
-This is a standalone source package. Bring your own Telegram bot token and Gemini API key. Audio is sent to Google; Gemini may consume paid quota. The prompt corrects punctuation and removes fillers, so the result is not a verbatim transcript.
+Bring your own Telegram bot token and Gemini API key. Audio is sent to Google, and requests may consume paid quota. The prompt corrects punctuation and removes fillers; the output is an edited transcript.
 
-## Установка
+## Setup
 
-Проверено на Windows 11 с Python 3.12.3. Сам бот не использует Windows API; Linux отдельно не проверен. FFmpeg нужен для преобразования форматов при ошибке прямого распознавания.
-
-Из каталога проекта:
+Verified on Windows 11 with Python 3.12.3. The bot does not use Windows APIs, but Linux has not been separately tested. FFmpeg is needed for format conversion when direct recognition fails.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -16,60 +16,60 @@ py -3.12 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-В `.env` укажите токен собственного бота, созданного через [BotFather](https://t.me/BotFather), и [ключ Gemini API](https://aistudio.google.com/apikey). Не используйте один bot token одновременно в двух polling-процессах.
+Set your own [BotFather](https://t.me/BotFather) token and [Gemini API key](https://aistudio.google.com/apikey) in `.env`. Do not run two polling processes with the same bot token.
 
 ```powershell
 ./run.ps1 -Check
 ./run.ps1
 ```
 
-`-Check` проверяет конфигурацию без сетевых запросов; он не подтверждает валидность ключей. Альтернативный Windows-запуск: `start_bot.bat`. На Linux: `.venv/bin/python my_telegram_bot.py` после создания venv и установки зависимостей.
+`-Check` validates configuration without network requests; it does not validate credentials. `start_bot.bat` is the alternative Windows launcher. On Linux, create an environment, install dependencies and run `.venv/bin/python my_telegram_bot.py`.
 
-## Настройка личного чата
+## Configure your private chat
 
-1. При первом запуске оставьте `TELEGRAM_CHAT_ID` пустым. Отправьте `/start` своему боту в личном чате: он покажет ID этого чата. Распознавание пока отключено.
-2. Запишите показанный ID в `.env` и перезапустите бота. После этого он обрабатывает аудио только из этого личного чата; сообщения других чатов и групп игнорируются.
-3. Отправьте голосовое сообщение, аудиозапись или аудиофайл как документ. Бот заменит «Обрабатываю…» на текст; длинный ответ отправит частями.
+1. Leave `TELEGRAM_CHAT_ID` empty initially. Send `/start` to your bot in a private chat; it returns that chat's ID. Transcription is disabled at this stage.
+2. Set the ID in `.env` and restart. Audio from other chats and groups is ignored.
+3. Send a voice message, audio recording or audio document. The bot replaces its processing message with text and splits long responses.
 
-Это одна настройка доступа. У бота нет БД, из команд доступна только `/start`.
+Only `/start` is available. There is no user database.
 
-## Параметры
+## Configuration
 
-| Переменная | Назначение |
+| Variable | Purpose |
 |---|---|
-| `GEMINI_MODELS` | Модели через запятую в порядке приоритета; по умолчанию `gemini-flash-latest,gemini-flash-lite-latest`, как в исходной локальной копии |
-| `REQUEST_TIMEOUT` | Общий таймаут скачивания и распознавания, по умолчанию 420 секунд |
-| `MAX_FILE_SIZE_MB` | Максимальный размер файла, по умолчанию 50 MB; облачный Telegram ограничивает скачивание 20 MB |
-| `FFMPEG_EXE` | `ffmpeg` из PATH или полный путь к исполняемому файлу |
-| `TELEGRAM_LOCAL_MODE` | `1` для уже настроенного локального Telegram Bot API |
-| `TELEGRAM_BASE_URL` | Например `http://127.0.0.1:8081/bot` для локального сервера |
-| `TELEGRAM_BASE_FILE_URL` | При необходимости `http://127.0.0.1:8081/file/bot` |
+| `GEMINI_MODELS` | Ordered model list; default `gemini-flash-latest,gemini-flash-lite-latest` |
+| `REQUEST_TIMEOUT` | Download/transcription timeout; default 420 seconds |
+| `MAX_FILE_SIZE_MB` | File size ceiling; default 50 MB, with a 20 MB cloud Bot API download limit |
+| `FFMPEG_EXE` | `ffmpeg` from PATH or an executable path |
+| `TELEGRAM_LOCAL_MODE` | `1` for an already configured local Telegram Bot API |
+| `TELEGRAM_BASE_URL` | Local server URL, for example `http://127.0.0.1:8081/bot` |
+| `TELEGRAM_BASE_FILE_URL` | Optional local file URL, for example `http://127.0.0.1:8081/file/bot` |
 
-Голосовые OGG, Telegram audio и аудиодокументы поддерживаются одним обработчиком. Распознаются расширения `.ogg`, `.oga`, `.opus`, `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.wma`, `.aiff`, `.aif`, `.amr`; это не гарантия поддержки каждого кодека Gemini или установленным FFmpeg.
+Voice OGG, Telegram audio and audio documents share one handler. Recognized extensions: `.ogg`, `.oga`, `.opus`, `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.wma`, `.aiff`, `.aif`, `.amr`. This does not guarantee support for every codec in Gemini or your FFmpeg installation.
 
-При 429 и временных серверных ошибках есть ограниченные повторы. Если модель недоступна, бот пробует следующую. Ошибка ключа не запускает резервные запросы. Настройки thinking оставлены модели, поскольку их поддержка различается.
+Retries are bounded for 429 and temporary server errors. Unavailable models fall back to the next configured model; authentication errors do not. Thinking settings are left to the model because support differs.
 
-## Файлы больше 20 MB
+## Files larger than 20 MB
 
-По умолчанию используется облачный Bot API с [ограничением скачивания 20 MB](https://core.telegram.org/bots/api#getfile). Для более крупных файлов нужен отдельно установленный [локальный Telegram Bot API](https://github.com/tdlib/telegram-bot-api), работающий с `--local`. Перед переключением уже работающего облачного бота Telegram требует вызова `logOut`; выполняйте миграцию отдельно от обычного запуска. Этот проект не меняет сервер автоматически.
+The default cloud Bot API has a [20 MB download limit](https://core.telegram.org/bots/api#getfile). Larger files require a separately installed [local Telegram Bot API](https://github.com/tdlib/telegram-bot-api) running with `--local`. Telegram requires `logOut` before migrating an existing cloud bot; handle that migration separately. This project does not change your server automatically.
 
-Укажите `TELEGRAM_LOCAL_MODE=1` и локальные URL. Бот по-прежнему соблюдает `MAX_FILE_SIZE_MB`. Серверный каталог, бинарник Bot API, Telegram API ID/hash и данные сессии не входят в этот пакет.
+Set `TELEGRAM_LOCAL_MODE=1` and the local URLs. `MAX_FILE_SIZE_MB` still applies. The server binary, server data, Telegram API ID/hash and sessions are not included.
 
-## Проверки
+## Verification
 
 ```powershell
 ./.venv/Scripts/python.exe -m unittest discover -s tests -v
 ./.venv/Scripts/python.exe -m pip check
 ```
 
-Тесты проверяют личный доступ, типы файлов, отказ до скачивания при превышении размера, повтор Telegram RetryAfter без дублирования уже отправленных частей, резервные модели, очистку и FFmpeg. Проверки без сетевых запросов; тест FFmpeg пропускается, если он не установлен.
+Tests cover private access, file types, rejection before download, Telegram RetryAfter without repeated delivered chunks, model fallback, cleanup and FFmpeg. API calls in unit tests are mocked; the FFmpeg test is skipped if it is unavailable.
 
-[Протокол проверки](docs/verification.md) описывает отдельный запуск с настоящим Gemini API и локальной имитацией Telegram. Работа через реальный Telegram на другом компьютере ещё не проверена.
+The [verification report](docs/verification.md) records a separate real Gemini API run with a local Telegram simulator. Delivery through real Telegram on another computer remains unverified.
 
-## Данные и лицензия
+## Data and license
 
-`.env` читается только рядом со скриптом. Бот не сохраняет имена, идентификаторы пользователей, аудио или транскрипции в БД. Временные файлы удаляются при завершении обработки; загруженный файл Gemini удаляется по возможности. При аварийном завершении процесса или недоступности API очистка может не выполниться. Это не меняет правила хранения данных Telegram и Google.
+Only the `.env` next to the script is loaded. The bot does not store names, user IDs, audio or transcripts in a database. Temporary audio is removed after processing; uploaded Gemini files are deleted when possible. Cleanup can fail after process termination or API unavailability. Telegram's and Google's retention policies still apply.
 
-Журнал в консоли содержит этапы и типы ошибок; код не выводит токены, текст записи или ID чата в журнал. Служебные файлы исключены из Git по правилам `.gitignore`. Перед публикацией проверьте фактический состав `git ls-files`.
+Console logging records stages and error types. Tokens, transcripts and chat IDs are not logged by the code. Runtime files are excluded by `.gitignore`; inspect `git ls-files` before publishing a customized copy.
 
-Исходники приложения: [MIT](LICENSE). Зависимости сохраняют собственные лицензии. Подготовленная версия не содержит ключей и данных исходной рабочей папки.
+Application source: [MIT](LICENSE). Dependencies retain their own licenses. This public package excludes credentials and data from the original working directory.
