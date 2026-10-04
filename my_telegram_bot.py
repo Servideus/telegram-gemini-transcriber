@@ -1,6 +1,7 @@
 """Personal Telegram audio transcription bot. No database or usage tracking."""
 from __future__ import annotations
 
+import httpx
 import argparse
 import asyncio
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ class Config:
     token: str
     api_key: str
     chat_id: int | None = None
-    models: tuple[str, ...] = ("gemini-flash-latest", "gemini-flash-lite-latest")
+    models: tuple[str, ...] = ("gemini-3.5-transcribe", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-flash-lite-latest")
     timeout: int = 420
     max_file_mb: int = 50
     ffmpeg: str = "ffmpeg"
@@ -97,30 +98,53 @@ class Transcriber:
     def __init__(self, config: Config):
         self.config = config
         self.client = genai.Client(api_key=config.api_key,
-                                   http_options=types.HttpOptions(timeout=config.timeout * 1000))
+                                   http_options=types.HttpOptions(timeout=config.timeout * 1000, retry_options=types.HttpRetryOptions(attempts=1)))
         self.api = self.client.aio
 
     async def close(self):
         await self.api.aclose()
         self.client.close()
 
+    async def generate_one(self, uploaded, model):
+        if model == "gemini-3.5-transcribe":
+            async with httpx.AsyncClient(timeout=self.config.timeout) as http:
+                response = await http.post(
+                    "https://generativelanguage.googleapis.com/v1beta/interactions",
+                    headers={"x-goog-api-key": self.config.api_key},
+                    json={"model": model,
+                          "input": [{"type": "audio", "uri": uploaded.uri,
+                                     "mime_type": uploaded.mime_type or "audio/ogg"}],
+                          "generation_config": {"transcription_config": {
+                              "mode": {"type": "verbatim"}, "language_codes": ["ru-RU"]}},
+                          "store": False})
+                response.raise_for_status()
+                return "\n".join(part["text"] for step in response.json().get("steps", [])
+                                 if step.get("type") == "model_output"
+                                 for part in step.get("content", [])
+                                 if part.get("type") == "text" and part.get("text"))
+        result = await self.api.models.generate_content(
+            model=model, contents=[PROMPT, uploaded],
+            config=types.GenerateContentConfig(temperature=0,
+                thinking_config=types.ThinkingConfig(thinking_level="minimal")))
+        return result.text or ""
+
     async def generate(self, uploaded):
-        for index, model in enumerate(self.config.models):
+        errors = []
+        for model in self.config.models:
             try:
-                result = await retry(lambda: self.api.models.generate_content(
-                    model=model, contents=[PROMPT, uploaded],
-                    config=types.GenerateContentConfig(temperature=0)))
-                text = (result.text or "").strip()
+                text = (await asyncio.wait_for(self.generate_one(uploaded, model),
+                                              timeout=self.config.timeout)).strip()
                 if not text:
-                    raise ValueError("Gemini вернул пустой текст.")
+                    raise RuntimeError("Gemini вернул пустой текст.")
                 log.info("Transcription completed with %s", model)
                 return text
             except Exception as error:
-                # Missing/retired models may be skipped; invalid credentials may not.
-                fallback = temporary_error(error) or error_code(error) == 404
-                if not fallback or index == len(self.config.models) - 1:
-                    raise
-                log.warning("Trying next model after %s (%s)", type(error).__name__, error_code(error))
+                errors.append(error)
+                log.warning("Model %s failed: %s (%s)", model, type(error).__name__, error_code(error))
+        # Preserve the existing conversion for audio rejected by every model.
+        if errors and all(error_code(error) == 400 for error in errors):
+            raise ValueError("Все модели отклонили формат аудио.") from errors[-1]
+        raise RuntimeError("Все модели Gemini не смогли распознать запись. Проверьте API, ключ и квоты.") from errors[-1]
 
     async def transcribe(self, path: Path) -> str:
         uploaded = None
@@ -249,7 +273,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with tempfile.TemporaryDirectory(prefix="telegram_transcribe_") as directory:
             source = Path(directory) / ("audio" + suffix)
-            async with asyncio.timeout(config.timeout):
+            async with asyncio.timeout(config.timeout * (len(config.models) + 1)):
                 tg_file = await media.get_file(read_timeout=120, connect_timeout=30)
                 await tg_file.download_to_drive(source, read_timeout=120, connect_timeout=30)
                 if source.stat().st_size > limit_mb * 1024 * 1024:

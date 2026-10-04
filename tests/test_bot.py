@@ -1,3 +1,5 @@
+import httpx
+import json
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -183,18 +185,38 @@ class Gemini(unittest.IsolatedAsyncioTestCase):
             self.transcriber = bot.Transcriber(bot.Config("123:fake", "fake", models=("first", "second")))
 
     async def test_quota_and_server_failures_use_next_model(self):
-        for code in (429, 503, 404):
+        for code in (429, 503, 404, 401, 403):
             self.api.models.generate_content.reset_mock()
-            self.api.models.generate_content.side_effect = [ApiError(code)] * (1 if code == 404 else 3) + [NS(text="Текст")]
+            self.api.models.generate_content.side_effect = [ApiError(code), NS(text="Текст")]
             with patch.object(bot.asyncio, "sleep", new_callable=AsyncMock):
                 self.assertEqual(await self.transcriber.generate(NS()), "Текст")
             self.assertEqual(self.api.models.generate_content.call_args.kwargs["model"], "second")
 
-    async def test_auth_failure_is_not_retried_or_converted(self):
+    async def test_auth_failure_attempts_each_model_once(self):
         self.api.models.generate_content.side_effect = ApiError(401)
-        with self.assertRaises(ApiError):
+        with self.assertRaises(RuntimeError):
             await self.transcriber.generate(NS())
-        self.api.models.generate_content.assert_awaited_once()
+        self.assertEqual(self.api.models.generate_content.await_count, 2)
+
+    async def test_empty_and_timeout_advance_once(self):
+        for first in (NS(text=" "), TimeoutError()):
+            self.api.models.generate_content.reset_mock()
+            self.api.models.generate_content.side_effect = [first, NS(text="OK")]
+            self.assertEqual(await self.transcriber.generate(NS()), "OK")
+            self.assertEqual(self.api.models.generate_content.await_count, 2)
+
+    async def test_transcribe_verbatim_request(self):
+        self.transcriber.config = bot.Config("123:fake", "fake")
+        real_client = httpx.AsyncClient
+        def respond(request):
+            body = json.loads(request.content)
+            self.assertFalse(body["store"])
+            self.assertEqual(body["generation_config"]["transcription_config"]["mode"], {"type": "verbatim"})
+            self.assertEqual(body["input"][0]["uri"], "https://example.test/audio")
+            return httpx.Response(200, json={"steps": [{"type": "model_output", "content": [{"type": "text", "text": "Ну, привет."}]}]})
+        with patch.object(bot.httpx, "AsyncClient", side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
+            self.assertEqual(await self.transcriber.generate(NS(uri="https://example.test/audio", mime_type="audio/ogg")), "Ну, привет.")
+        self.api.models.generate_content.assert_not_awaited()
 
     async def test_processing_state_and_remote_audio_deletion(self):
         self.api.files.upload.return_value = types.File(name="files/test", state=types.FileState.PROCESSING)
@@ -208,7 +230,7 @@ class Gemini(unittest.IsolatedAsyncioTestCase):
     async def test_remote_audio_deleted_even_on_generation_error(self):
         self.api.files.upload.return_value = types.File(name="files/test", state=types.FileState.ACTIVE)
         self.api.models.generate_content.side_effect = ApiError(401)
-        with self.assertRaises(ApiError):
+        with self.assertRaises(RuntimeError):
             await self.transcriber.transcribe(Path("audio.wav"))
         self.api.files.delete.assert_awaited_once_with(name="files/test")
 

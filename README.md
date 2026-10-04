@@ -37,8 +37,8 @@ Only `/start` is available. There is no user database.
 
 | Variable | Purpose |
 |---|---|
-| `GEMINI_MODELS` | Ordered model list; default `gemini-flash-latest,gemini-flash-lite-latest` |
-| `REQUEST_TIMEOUT` | Download/transcription timeout; default 420 seconds |
+| `GEMINI_MODELS` | Ordered model list; default `gemini-3.5-transcribe,gemini-3.5-flash-lite,gemini-3.6-flash,gemini-flash-lite-latest` |
+| `REQUEST_TIMEOUT` | Per-request timeout; default 420 seconds |
 | `MAX_FILE_SIZE_MB` | File size ceiling; default 50 MB, with a 20 MB cloud Bot API download limit |
 | `FFMPEG_EXE` | `ffmpeg` from PATH or an executable path |
 | `TELEGRAM_LOCAL_MODE` | `1` for an already configured local Telegram Bot API |
@@ -47,7 +47,7 @@ Only `/start` is available. There is no user database.
 
 Voice OGG, Telegram audio and audio documents share one handler. Recognized extensions: `.ogg`, `.oga`, `.opus`, `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.wma`, `.aiff`, `.aif`, `.amr`. This does not guarantee support for every codec in Gemini or your FFmpeg installation.
 
-Retries are bounded for 429 and temporary server errors. Unavailable models fall back to the next configured model; authentication errors do not. Thinking settings are left to the model because support differs.
+Each recording starts with the first model. Any error, timeout or empty response advances to the next model immediately. Each model is attempted once. If all fail, the bot reports an error. Transcribe uses Interactions REST in verbatim mode (ru-RU, store=false), preserving fillers and repetitions. Other models use minimal thinking and the existing text cleanup prompt. Upload retries remain bounded. The overall processing timeout is REQUEST_TIMEOUT × (model count + 1).
 
 ## Files larger than 20 MB
 

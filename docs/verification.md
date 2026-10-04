@@ -17,3 +17,7 @@ Telegram-сервер был локальной тестовой имитаци�
 Для проверки собственного экземпляра заполните свои ключи, выполните настройку `/start` и отправьте короткое голосовое сообщение. Проверяйте новую копию с отдельным bot token либо предварительно остановите прежний polling того же бота.
 
 В чистом пакете отсутствуют рабочий `.env`, базы, логи, временные записи и данные локального Telegram Bot API. Исходная рабочая копия остаётся способом возврата.
+
+## 2026-10-04 model fallback update
+
+Four models now run in the agreed order. Every error or empty response advances once; generation retries are disabled. Unit tests cover authentication/quota/server errors, timeout, empty responses, Transcribe REST verbatim parsing, audio cleanup and Telegram delivery. The production Oracle bot retains its separate quota/statistics and local Bot API implementation.
